@@ -93,36 +93,84 @@ def normalize_annotations(text, log):
     return re.sub(r"[ \t　]{2,}", " ", text).strip()
 
 
+_TERMINATORS = "。！？!?♪"
+# A sentence ends at 。！？ etc., keeping closing brackets, emoji and spaces that follow it.
+_SENTENCE_RE = re.compile(
+    rf"[^{_TERMINATORS}]*[{_TERMINATORS}]+(?:[」』）)\]]|{_EMOJI_RE.pattern}|\s)*|[^{_TERMINATORS}]+$"
+)
+
+
+def _split_long(text, max_chars):
+    """Split text longer than max_chars at sentence ends, then at commas, then hard."""
+    if len(text) <= max_chars:
+        return [text]
+    pieces = [s for s in _SENTENCE_RE.findall(text) if s.strip()]
+    if len(pieces) <= 1:
+        pieces = [s for s in re.split(r"(?<=[、，,])", text) if s.strip()]
+    if len(pieces) <= 1:
+        return [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
+    out = []
+    for p in pieces:
+        out += _split_long(p, max_chars) if len(p) > max_chars else [p]
+    return out
+
+
+def _units(text, max_chars):
+    """Break text into (unit, joiner) pairs: paragraphs, then lines, then sentences if needed."""
+    units = []
+    for pi, para in enumerate(p.strip() for p in re.split(r"\n\s*\n", text)):
+        if not para:
+            continue
+        lines = [para] if len(para) <= max_chars else [l.strip() for l in para.split("\n") if l.strip()]
+        for li, line in enumerate(lines):
+            for si, sentence in enumerate(_split_long(line, max_chars)):
+                joiner = "\n\n" if li == 0 and si == 0 else ("\n" if si == 0 else "")
+                units.append((sentence.strip(), joiner if units else ""))
+    return units
+
+
+def _pack(text, max_chars):
+    """Pack units into parts of at most ~max_chars, preferring paragraph and line boundaries."""
+    parts, buf = [], ""
+    for unit, joiner in _units(text, max_chars):
+        if buf and len(buf) + len(unit) > max_chars:
+            parts.append(buf)
+            buf = unit
+        else:
+            buf = f"{buf}{joiner}{unit}" if buf else unit
+    if buf:
+        parts.append(buf)
+    return parts
+
+
 def split_script(script, mode, max_chars, default_pause):
-    """Split a script into [(text, pause_after_seconds)]."""
+    """Split a script into [(text, pause_after_seconds)].
+
+    Without '---' lines, the script is split automatically: paragraphs are grouped up to
+    max_chars, and paragraphs that are too long are split at line breaks and sentence ends.
+    Blocks between '---' lines are kept as they are unless they exceed 2 x max_chars.
+    """
     script = script.replace("\r\n", "\n")
     lines = script.split("\n")
     parts = []
     use_separator = mode == "separator (---)" or (mode == "auto" and any(_SEPARATOR_RE.match(l) for l in lines))
     if use_separator:
-        buf = []
+        blocks, buf = [], []
         for line in lines:
             m = _SEPARATOR_RE.match(line)
             if not m:
                 buf.append(line)
                 continue
             if "\n".join(buf).strip():
-                parts.append(["\n".join(buf).strip(), float(m.group(1)) if m.group(1) else default_pause])
+                blocks.append(("\n".join(buf).strip(), float(m.group(1)) if m.group(1) else default_pause))
             buf = []
         if "\n".join(buf).strip():
-            parts.append(["\n".join(buf).strip(), default_pause])
+            blocks.append(("\n".join(buf).strip(), default_pause))
+        for block, pause in blocks:
+            sub = [block] if len(block) <= 2 * max_chars else _pack(block, max_chars)
+            parts += [[s, default_pause] for s in sub[:-1]] + [[sub[-1], pause]]
     else:
-        buf = ""
-        for p in (p.strip() for p in re.split(r"\n\s*\n", script)):
-            if not p:
-                continue
-            if buf and len(buf) + len(p) > max_chars:
-                parts.append([buf, default_pause])
-                buf = p
-            else:
-                buf = f"{buf}\n\n{p}" if buf else p
-        if buf:
-            parts.append([buf, default_pause])
+        parts = [[p, default_pause] for p in _pack(script, max_chars)]
     if parts:
         parts[-1][1] = 0.0
     return [tuple(p) for p in parts]
@@ -233,16 +281,16 @@ class IrodoriTTSLongformSampler:
                 "model_config": ("IRODORI_MODEL_CONFIG", {
                     "tooltip": "Output of IrodoriTTS Model Loader. / IrodoriTTS Model Loader の出力。"}),
                 "script": ("STRING", {"multiline": True, "default": "", "tooltip":
-                    "Script. A line with only '---' starts a new part ('--- 1.5' = 1.5 s pause after it). "
-                    "Without separators, paragraphs are grouped automatically. / 台本。「---」だけの行でパートを区切ります"
-                    "（「--- 1.5」で直後の間を1.5秒に）。区切りが無ければ段落ごとに自動でまとめます。"}),
+                    "Paste the whole script; it is split into parts automatically. Optionally, a line with only '---' "
+                    "marks a scene break ('--- 1.5' = 1.5 s pause after it). / 台本を貼るだけで自動でパートに分けます。"
+                    "「---」だけの行で場面の区切りを指定することもできます（「--- 1.5」で直後の間を1.5秒に）。"}),
                 "seed": ("INT", {"default": 777, "min": 0, "max": sys.maxsize, "tooltip":
                     "Base seed. Part N uses seed + N - 1. / 基準seed。パートNは seed + N - 1 を使います。"}),
                 "split_mode": (["auto", "separator (---)", "paragraph"], {"default": "auto", "tooltip":
-                    "auto: use '---' if present, otherwise group paragraphs up to max_chars. / "
-                    "auto: 「---」があればそれで区切り、無ければ段落を max_chars ずつまとめます。"}),
+                    "auto: use '---' if present, otherwise split automatically (paragraphs, lines, sentence ends). / "
+                    "auto: 「---」があればそれで区切り、無ければ段落・改行・文末で自動分割します。"}),
                 "max_chars": ("INT", {"default": 100, "min": 20, "max": 600, "tooltip":
-                    "Target max characters per part when grouping paragraphs. / 自動分割時の1パートの最大文字数の目安。"}),
+                    "Target max characters per part for automatic splitting. / 自動分割での1パートの最大文字数の目安。"}),
                 "pause_seconds": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 5.0, "step": 0.1, "tooltip":
                     "Default pause between parts. / パート間の間（秒）。"}),
                 "context_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 30.0, "step": 1.0, "tooltip":
