@@ -68,6 +68,10 @@ IrodoriTTS Reference Audio (optional) ──┘
 
 ### Script format
 
+**Just paste your script.** It is split automatically: paragraphs (separated by blank lines) are grouped up to `max_chars` characters per part, and paragraphs that are too long are split at line breaks and sentence ends (。！？). Novels and scripts without blank lines work too.
+
+To decide yourself where scenes break (and how long the pause is), add lines with only `---`:
+
 ```
 First part of the script.
 It can span several lines.
@@ -77,7 +81,7 @@ Second part. The "--- 1.2" line above means a 1.2 s pause before it.
 Third part (default pause).
 ```
 
-Without `---` lines, paragraphs (separated by blank lines) are grouped up to `max_chars` characters per part.
+Blocks between `---` lines are kept as they are (only blocks longer than 2 × `max_chars` are split further).
 Parts of 60–120 Japanese characters (about 10–20 s) work best.
 
 ### Inputs
@@ -86,8 +90,8 @@ Parts of 60–120 Japanese characters (about 10–20 s) work best.
 |---|---|
 | `script` | The whole script. Emoji annotations of Irodori-TTS (🤭 😮‍💨 ⏸️ 👂 …) can be used. |
 | `seed` | Base seed. Part N uses `seed + N - 1`. |
-| `split_mode` | `auto` (use `---` if present, else paragraphs), `separator (---)`, `paragraph` |
-| `max_chars` | Max characters per part when grouping paragraphs. |
+| `split_mode` | `auto` (use `---` if present, otherwise split automatically), `separator (---)`, `paragraph` (always split automatically) |
+| `max_chars` | Target max characters per part for automatic splitting. |
 | `pause_seconds` | Default pause between parts. |
 | `context_seconds` | Experimental. Seconds of the previous part (phrase endings removed) added as a second reference. **0 (anchor only) is recommended**; higher values can make phrase endings hoarse. |
 | `num_steps` | Sampling steps per part. |
