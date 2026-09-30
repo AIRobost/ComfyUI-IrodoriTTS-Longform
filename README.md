@@ -95,7 +95,7 @@ Parts of 60–120 Japanese characters (about 10–20 s) work best.
 | `pause_seconds` | Default pause between parts. |
 | `context_seconds` | Experimental. Seconds of the previous part (phrase endings removed) added as a second reference. **0 (anchor only) is recommended**; higher values can make phrase endings hoarse. |
 | `num_steps` | Sampling steps per part. |
-| `clean_text` | Maps unsupported emoji and stage directions such as `(sigh)` / `（はぁ…）` to Irodori emoji. |
+| `clean_text` | Maps unsupported emoji and stage directions such as `(sigh)` / `（はぁ…）` to Irodori emoji, and adds a missing `。` at the end of Japanese lines (sentences without final punctuation tend to trail off). |
 | `part_seeds` | Re-roll specific parts, e.g. `3:1234, 5:99`. Parts after it also change, because they follow it. |
 | `voice_design_config` | (optional) Caption describing the voice, shared by all parts. |
 | `ref_config` | (optional) Reference audio for voice cloning. Used as the anchor voice. |
