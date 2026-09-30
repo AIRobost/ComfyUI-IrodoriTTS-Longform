@@ -143,6 +143,30 @@ def _pack(text, max_chars):
     return parts
 
 
+_LINE_END_OK = "。！？!?…‥、，,」』）)]】♪～〜ー―—.:;：；"
+_TRAILING_RE = re.compile(rf"((?:{_EMOJI_RE.pattern}|\s)*)$")
+_JAPANESE_RE = re.compile(r"[぀-ヿ㐀-鿿]")
+
+
+def add_missing_periods(text, log):
+    """Add '。' to Japanese lines that end without punctuation (before any trailing emoji).
+
+    Irodori-TTS tends to trail off or stretch the ending when a sentence has no final punctuation.
+    """
+    out, added = [], []
+    for line in text.split("\n"):
+        tail = _TRAILING_RE.search(line).group(1)
+        body = line[: len(line) - len(tail)]
+        if body.strip() and _JAPANESE_RE.search(body) and body.rstrip()[-1] not in _LINE_END_OK:
+            added.append(body.rstrip()[-8:])
+            line = body.rstrip() + "。" + tail
+        out.append(line)
+    if added:
+        shown = ", ".join(f"…{a}" for a in added[:4]) + (f" (+{len(added) - 4})" if len(added) > 4 else "")
+        log.append(f"  added 。 to {len(added)} line(s): {shown}")
+    return "\n".join(out)
+
+
 def split_script(script, mode, max_chars, default_pause):
     """Split a script into [(text, pause_after_seconds)].
 
@@ -300,8 +324,9 @@ class IrodoriTTSLongformSampler:
                     "生成音声を参照に戻すと語尾がかすれることがあります）。"}),
                 "num_steps": ("INT", {"default": 40, "min": 1, "max": 120}),
                 "clean_text": ("BOOLEAN", {"default": True, "tooltip":
-                    "Map unsupported emoji and stage directions like (sigh) to Irodori emoji. / "
-                    "未対応の絵文字や（はぁ…）などのト書きを、対応する絵文字に変換します。"}),
+                    "Map unsupported emoji and stage directions like (sigh) to Irodori emoji, and add a missing '。' "
+                    "at the end of Japanese lines. / 未対応の絵文字や（はぁ…）などのト書きを対応する絵文字に変換し、"
+                    "句点のない行末に「。」を補います。"}),
                 "part_seeds": ("STRING", {"default": "", "tooltip":
                     "Override seeds per part, e.g. '3:1234, 5:99'. Later parts change too (they follow the "
                     "previous part). / パートごとのseed指定。例: 3:1234, 5:99（以降のパートも引き継ぎで変わります）"}),
@@ -333,7 +358,7 @@ class IrodoriTTSLongformSampler:
             cleaned = []
             for i, (text, pause) in enumerate(parts, 1):
                 changes = []
-                text = normalize_annotations(text, changes)
+                text = add_missing_periods(normalize_annotations(text, changes), changes)
                 if changes:
                     log += [f"[part{i:02d} text]"] + changes
                 if text:
