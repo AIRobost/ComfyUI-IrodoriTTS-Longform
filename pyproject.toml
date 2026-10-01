@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "comfyui-irodoritts-longform"
 description = "Long-form Japanese TTS for ComfyUI: generate long scripts with Irodori-TTS part by part with one consistent voice across parts."
 version = "1.1.0"
