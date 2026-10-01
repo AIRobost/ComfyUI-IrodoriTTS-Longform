@@ -52,7 +52,7 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/AIRobost/ComfyUI-IrodoriTTS-Longform.git
 ```
 
-重启 ComfyUI 后，`IrodoriTTS Longform` 分类中会出现 **IrodoriTTS Long-form Sampler**。
+重启 ComfyUI 后，`IrodoriTTS Longform` 分类中会出现 **IrodoriTTS Long-form Sampler**、**IrodoriTTS Save Voice** 和 **IrodoriTTS Load Voice**。
 
 ## 使用方法
 
@@ -99,7 +99,22 @@ IrodoriTTS Reference Audio（可选） ──┘
 | `ref_config` | （可选）用于声音克隆的参考音频，作为锚点音色使用。 |
 | `lora_stack`, `cfg_config` | （可选）与原始 Sampler 相同。 |
 
-输出：`audio`（合并后的音频）和 `log`（各段的时长 / seed，以及 `clean_text` 所做的修改）。
+输出：`audio`（合并后的音频）、`log`（各段的时长 / seed，以及 `clean_text` 所做的修改）和 `voice`（所有段落使用的音色，供 Save Voice 使用）。
+
+### 下次继续使用同一个音色
+
+第1段的音色（锚点）可以保存下来，在之后的生成中再次使用。即使在不同的日子生成不同的台本，也能保持同一个音色。
+
+```
+Long-form Sampler ──(voice)──► IrodoriTTS Save Voice      名称: "narrator"   → models/irodori_voices/narrator.pt
+                                                                              （+ 试听用 .wav，+ 记录提示文本 / 模型 / seed 的 .json）
+下次:
+IrodoriTTS Load Voice（"narrator"）──► Long-form Sampler（或原始 IrodoriTTS Sampler）的 ref_config
+```
+
+- 如果名称已存在，除非开启 `overwrite`，否则会自动加上「 (2)」等后缀另存。
+- 使用与保存时相同的提示文本（caption），音色最接近。
+- 保存的音色只作为一次参考使用（不会把生成的音频再作为参考），因此不会累积瑕疵。
 
 ### 提示
 

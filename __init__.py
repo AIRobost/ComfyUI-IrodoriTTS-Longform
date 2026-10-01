@@ -294,8 +294,14 @@ class IrodoriTTSLongformSampler:
         "長い台本をパートごとに同じ声で生成し、1本の音声につなげます。"
     )
     CATEGORY = CATEGORY
-    RETURN_TYPES = ("AUDIO", "STRING")
-    RETURN_NAMES = ("audio", "log")
+    RETURN_TYPES = ("AUDIO", "STRING", "IRODORI_REF_CONFIG")
+    RETURN_NAMES = ("audio", "log", "voice")
+    OUTPUT_TOOLTIPS = (
+        "Joined audio. / 連結した音声。",
+        "Length, seed and text changes of each part. / 各パートの秒数・seed・テキストの変更点。",
+        "The voice used for all parts. Connect to Save Voice to reuse it later. / "
+        "全パートで使った声。Save Voice につなぐと保存して次回も使えます。",
+    )
     FUNCTION = "run"
 
     @classmethod
@@ -398,6 +404,7 @@ class IrodoriTTSLongformSampler:
         total = len(parts) * int(num_steps)
         pbar = comfy.utils.ProgressBar(total)
         anchor = context = None
+        preview = next(iter(ref.get("ref_wavs") or []), None) or ref.get("voice_preview")
         pieces, out_sr = [], None
         policy = str(model_config.get("runtime_cache_policy", "offload_after_use"))
         try:
@@ -437,6 +444,8 @@ class IrodoriTTSLongformSampler:
                 # Without a user reference, part 1 becomes the anchor voice for every later part.
                 if not user_refs and anchor is None:
                     anchor = encode(wav, sr, f"anchor_{i:02d}")
+                    preview = work / "anchor_preview.wav"
+                    save_wav(preview, wav, sr)
                 elif context_seconds > 0:
                     ctx = clean_context(wav, sr, context_seconds)
                     context = encode(ctx, sr, f"context_{i:02d}") if ctx is not None else None
@@ -463,8 +472,151 @@ class IrodoriTTSLongformSampler:
         log.append(f"total: {full.shape[1] / out_sr:.1f}s / {len(pieces)} parts")
         text_log = "\n".join(log)
         print("[IrodoriTTS Longform]\n" + text_log)
-        return ({"waveform": full.unsqueeze(0), "sample_rate": out_sr}, text_log)
+
+        # The voice every part was conditioned on, so it can be saved and reused later.
+        checkpoint = Path(str(model_config.get("checkpoint", "")))
+        voice = make_voice(
+            user_refs or [anchor], preview,
+            meta=ref.get("voice_meta") or {
+                "source": "reference audio" if user_refs else "long-form part 1",
+                "caption": caption_cfg.get("caption", None),
+                "model": f"{checkpoint.parent.name}/{checkpoint.name}",
+                "seed": seed_overrides.get(1, int(seed)),
+            },
+        )
+        return ({"waveform": full.unsqueeze(0), "sample_rate": out_sr}, text_log, voice)
 
 
-NODE_CLASS_MAPPINGS = {"IrodoriLongform.Sampler": IrodoriTTSLongformSampler}
-NODE_DISPLAY_NAME_MAPPINGS = {"IrodoriLongform.Sampler": "IrodoriTTS Long-form Sampler"}
+# ---------------------------------------------------------------------------
+# Saved voices
+# ---------------------------------------------------------------------------
+
+def voice_dir():
+    path = Path(folder_paths.models_dir) / "irodori_voices"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def save_wav(path, wav, sr):
+    import soundfile as sf
+
+    sf.write(str(path), wav.detach().float().cpu().numpy().T, int(sr))
+
+
+def make_voice(latents, preview=None, meta=None):
+    """An IRODORI_REF_CONFIG that conditions on saved codec latents (understood by the Irodori samplers)."""
+    return {
+        "ref_wavs": [],
+        "ref_latents": [str(p) for p in latents],
+        "no_ref": False,
+        "ref_normalize_db": None,
+        "ref_ensure_max": True,
+        "max_ref_seconds": None,
+        "voice_preview": str(preview) if preview else None,
+        "voice_meta": dict(meta or {}),
+    }
+
+
+def _safe_name(name):
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", name).strip(" .")
+    return name or "voice"
+
+
+class IrodoriTTSSaveVoice:
+    DESCRIPTION = (
+        "Save a voice (from Long-form Sampler) to models/irodori_voices so it can be reused with Load Voice. / "
+        "声を models/irodori_voices に保存し、Load Voice で次回も使えるようにします。"
+    )
+    CATEGORY = CATEGORY
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("saved_as",)
+    FUNCTION = "save"
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "voice": ("IRODORI_REF_CONFIG", {"tooltip": "The 'voice' output of Long-form Sampler. / Long-form Sampler の voice 出力。"}),
+                "name": ("STRING", {"default": "my_voice", "tooltip": "Name of the saved voice. / 保存する声の名前。"}),
+                "overwrite": ("BOOLEAN", {"default": False, "tooltip":
+                    "Overwrite a voice with the same name. If off, ' (2)' etc. is added. / "
+                    "同じ名前の声を上書きします。オフなら「 (2)」などを付けて別名で保存します。"}),
+            },
+        }
+
+    def save(self, voice, name, overwrite):
+        import json
+        import shutil
+        from datetime import datetime
+
+        latents = [torch.load(p, map_location="cpu", weights_only=True) for p in voice.get("ref_latents") or []]
+        if not latents:
+            raise ValueError("This voice has no saved latent. Connect the 'voice' output of Long-form Sampler.")
+        # Latents are (frames, dim) with dim 32 or 128; concatenate clips along time like the Irodori runtime.
+        latents = [z.squeeze(0) if z.dim() == 3 else z for z in latents]
+        latents = [z.T if z.shape[-1] not in (32, 128) and z.shape[0] in (32, 128) else z for z in latents]
+        latent = torch.cat(latents, dim=0).contiguous()
+
+        base = _safe_name(name)
+        stem, n = base, 2
+        while not overwrite and (voice_dir() / f"{stem}.pt").exists():
+            stem, n = f"{base} ({n})", n + 1
+        target = voice_dir() / f"{stem}.pt"
+        torch.save(latent, target)
+
+        preview = voice.get("voice_preview")
+        if preview and Path(preview).exists():
+            shutil.copyfile(preview, target.with_suffix(".wav"))
+        meta = dict(voice.get("voice_meta") or {})
+        meta.update({"name": stem, "saved_at": datetime.now().isoformat(timespec="seconds"),
+                     "latent_frames": int(latent.shape[0])})
+        target.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        message = f"saved voice: {stem}  ({target})"
+        print(f"[IrodoriTTS Longform] {message}")
+        return {"ui": {"text": [message]}, "result": (stem,)}
+
+
+class IrodoriTTSLoadVoice:
+    DESCRIPTION = (
+        "Load a voice saved with Save Voice. Connect it to 'ref_config' of Long-form Sampler (or the Irodori Sampler). / "
+        "Save Voice で保存した声を読み込みます。Long-form Sampler（または Irodori Sampler）の ref_config につなぎます。"
+    )
+    CATEGORY = CATEGORY
+    RETURN_TYPES = ("IRODORI_REF_CONFIG", "STRING")
+    RETURN_NAMES = ("voice", "info")
+    FUNCTION = "load"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        names = sorted(p.stem for p in voice_dir().glob("*.pt"))
+        return {"required": {"voice_name": (names or ["(no saved voices)"], {
+            "tooltip": "Voices in models/irodori_voices. / models/irodori_voices にある声。"})}}
+
+    @classmethod
+    def IS_CHANGED(cls, voice_name):
+        path = voice_dir() / f"{voice_name}.pt"
+        return path.stat().st_mtime if path.exists() else voice_name
+
+    def load(self, voice_name):
+        import json
+
+        path = voice_dir() / f"{voice_name}.pt"
+        if not path.exists():
+            raise FileNotFoundError(f"Saved voice not found: {path}. Save one with 'IrodoriTTS Save Voice' first.")
+        meta_path, wav_path = path.with_suffix(".json"), path.with_suffix(".wav")
+        meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+        info = "\n".join(f"{k}: {v}" for k, v in meta.items() if v not in (None, ""))
+        return (make_voice([path], wav_path if wav_path.exists() else None, meta), info or voice_name)
+
+
+NODE_CLASS_MAPPINGS = {
+    "IrodoriLongform.Sampler": IrodoriTTSLongformSampler,
+    "IrodoriLongform.SaveVoice": IrodoriTTSSaveVoice,
+    "IrodoriLongform.LoadVoice": IrodoriTTSLoadVoice,
+}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "IrodoriLongform.Sampler": "IrodoriTTS Long-form Sampler",
+    "IrodoriLongform.SaveVoice": "IrodoriTTS Save Voice",
+    "IrodoriLongform.LoadVoice": "IrodoriTTS Load Voice",
+}
