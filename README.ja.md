@@ -53,7 +53,7 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/AIRobost/ComfyUI-IrodoriTTS-Longform.git
 ```
 
-ComfyUI を再起動すると、`IrodoriTTS Longform` カテゴリに **IrodoriTTS Long-form Sampler** が追加されます。
+ComfyUI を再起動すると、`IrodoriTTS Longform` カテゴリに **IrodoriTTS Long-form Sampler**、**IrodoriTTS Save Voice**、**IrodoriTTS Load Voice** が追加されます。
 
 ## 使い方
 
@@ -100,7 +100,22 @@ IrodoriTTS Reference Audio（任意） ──┘
 | `ref_config` | （任意）声クローン用の参照音声。アンカーの声として使います。 |
 | `lora_stack`, `cfg_config` | （任意）元の Sampler と同じです。 |
 
-出力: `audio`（連結した音声）と `log`（各パートの秒数・seed、`clean_text` で変えた内容）。
+出力: `audio`（連結した音声）、`log`（各パートの秒数・seed、`clean_text` で変えた内容）、`voice`（全パートで使った声。Save Voice 用）。
+
+### 次回も同じ声で生成する
+
+パート1の声（アンカー）を保存して、あとの生成でも使えます。別の日に別の台本を作っても、同じ声にそろえられます。
+
+```
+Long-form Sampler ──(voice)──► IrodoriTTS Save Voice      名前: "narrator"   → models/irodori_voices/narrator.pt
+                                                                              （＋試聴用 .wav、声の指定・モデル・seed を記録した .json）
+次回:
+IrodoriTTS Load Voice（"narrator"）──► Long-form Sampler（または元の IrodoriTTS Sampler）の ref_config
+```
+
+- 同じ名前がすでにある場合は、`overwrite` をオンにしない限り「 (2)」などを付けて別名で保存します。
+- 声の指定（キャプション）は保存したときと同じにすると、いちばん近い声になります。
+- 保存した声は参照として1回使うだけ（生成した音声を参照に戻さない）なので、乱れが積み重なることはありません。
 
 ### コツ
 

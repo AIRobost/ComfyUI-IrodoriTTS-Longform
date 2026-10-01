@@ -54,7 +54,7 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/AIRobost/ComfyUI-IrodoriTTS-Longform.git
 ```
 
-Restart ComfyUI. The node appears as **IrodoriTTS Long-form Sampler** in the `IrodoriTTS Longform` category.
+Restart ComfyUI. The nodes **IrodoriTTS Long-form Sampler**, **IrodoriTTS Save Voice** and **IrodoriTTS Load Voice** appear in the `IrodoriTTS Longform` category.
 
 ## Usage
 
@@ -101,7 +101,22 @@ Parts of 60–120 Japanese characters (about 10–20 s) work best.
 | `ref_config` | (optional) Reference audio for voice cloning. Used as the anchor voice. |
 | `lora_stack`, `cfg_config` | (optional) Same as the original sampler. |
 
-Outputs: `audio` (joined audio) and `log` (length / seed of each part and the text changes made by `clean_text`).
+Outputs: `audio` (joined audio), `log` (length / seed of each part and the text changes made by `clean_text`) and `voice` (the voice used for all parts, for Save Voice).
+
+### Reuse the same voice next time
+
+The voice of part 1 (the anchor) can be saved and used again in later generations, so different scripts made on different days share the same voice.
+
+```
+Long-form Sampler ──(voice)──► IrodoriTTS Save Voice      name: "narrator"   → models/irodori_voices/narrator.pt
+                                                                                (+ .wav preview, + .json with caption / model / seed)
+next time:
+IrodoriTTS Load Voice ("narrator") ──► ref_config of Long-form Sampler (or of the original IrodoriTTS Sampler)
+```
+
+- If the name already exists, ` (2)` etc. is added unless `overwrite` is on.
+- Use the same caption as when the voice was saved for the closest result.
+- A saved voice is used as a reference only once (it is not fed back), so it does not accumulate artifacts.
 
 ### Tips
 

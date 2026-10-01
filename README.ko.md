@@ -53,7 +53,7 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/AIRobost/ComfyUI-IrodoriTTS-Longform.git
 ```
 
-ComfyUI를 재시작하면 `IrodoriTTS Longform` 카테고리에 **IrodoriTTS Long-form Sampler**가 추가됩니다.
+ComfyUI를 재시작하면 `IrodoriTTS Longform` 카테고리에 **IrodoriTTS Long-form Sampler**, **IrodoriTTS Save Voice**, **IrodoriTTS Load Voice**가 추가됩니다.
 
 ## 사용법
 
@@ -100,7 +100,22 @@ IrodoriTTS Reference Audio (선택) ──┘
 | `ref_config` | (선택) 음성 복제용 참조 음성. 앵커 목소리로 사용됩니다. |
 | `lora_stack`, `cfg_config` | (선택) 원래 Sampler와 같습니다. |
 
-출력: `audio`(연결된 오디오)와 `log`(각 파트의 길이 / seed, `clean_text`로 바뀐 내용).
+출력: `audio`(연결된 오디오), `log`(각 파트의 길이 / seed, `clean_text`로 바뀐 내용), `voice`(모든 파트에 사용한 목소리, Save Voice용).
+
+### 다음에도 같은 목소리로 생성하기
+
+파트 1의 목소리(앵커)를 저장해 두었다가 이후 생성에서도 사용할 수 있습니다. 다른 날 다른 대본을 만들어도 같은 목소리를 유지할 수 있습니다.
+
+```
+Long-form Sampler ──(voice)──► IrodoriTTS Save Voice      이름: "narrator"   → models/irodori_voices/narrator.pt
+                                                                              (+ 미리 듣기용 .wav, 캡션 / 모델 / seed를 기록한 .json)
+다음에:
+IrodoriTTS Load Voice ("narrator") ──► Long-form Sampler(또는 원래 IrodoriTTS Sampler)의 ref_config
+```
+
+- 같은 이름이 이미 있으면 `overwrite`를 켜지 않는 한 「 (2)」 등을 붙여 다른 이름으로 저장합니다.
+- 캡션은 저장할 때와 같게 하면 가장 비슷한 목소리가 됩니다.
+- 저장한 목소리는 참조로 한 번만 쓰이므로(생성한 오디오를 다시 참조로 쓰지 않음) 잡음이 쌓이지 않습니다.
 
 ### 팁
 
